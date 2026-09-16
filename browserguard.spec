@@ -114,5 +114,8 @@ cli_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    uac_admin=True,
+    # Deliberately NOT uac_admin: read-only commands such as `status`, `detect`
+    # and `verify` should run without a UAC prompt. Commands that write policy
+    # check for admin themselves and say so if it is missing.
+    uac_admin=False,
 )
