@@ -1,0 +1,21 @@
+# Proxies, VPNs and circumvention - these defeat every other layer of filtering
+hide.me
+hidemyass.com
+proxysite.com
+croxyproxy.com
+kproxy.com
+4everproxy.com
+whoer.net
+vpnbook.com
+nordvpn.com
+expressvpn.com
+surfshark.com
+protonvpn.com
+tunnelbear.com
+windscribe.com
+hola.org
+psiphon.ca
+torproject.org
+ultrasurf.us
+zend2.com
+unblocksite.net

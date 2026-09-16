@@ -1,0 +1,44 @@
+# Adult / pornography
+# One entry per line. Entries are Chromium URLBlocklist patterns: a bare domain
+# blocks that domain and all of its subdomains.
+pornhub.com
+xvideos.com
+xnxx.com
+xhamster.com
+redtube.com
+youporn.com
+tube8.com
+spankbang.com
+youjizz.com
+keezmovies.com
+sxyprn.com
+porntrex.com
+eporner.com
+txxx.com
+hqporner.com
+porn300.com
+brazzers.com
+bangbros.com
+realitykings.com
+naughtyamerica.com
+digitalplayground.com
+onlyfans.com
+fansly.com
+chaturbate.com
+stripchat.com
+bongacams.com
+livejasmin.com
+cam4.com
+myfreecams.com
+rule34.xxx
+e-hentai.org
+nhentai.net
+hentaihaven.xxx
+hanime.tv
+motherless.com
+fapello.com
+erome.com
+imagefap.com
+literotica.com
+adultfriendfinder.com
+ashleymadison.com

@@ -1,0 +1,9 @@
+# Video streaming and time sinks
+netflix.com
+hulu.com
+disneyplus.com
+primevideo.com
+twitch.tv
+crunchyroll.com
+max.com
+peacocktv.com

@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "browserguard"
+version = "1.0.0"
+description = "Browser-level parental controls for Windows, applied to every installed browser at once."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "CandanUmut" }]
+keywords = [
+    "parental-controls",
+    "content-filtering",
+    "windows",
+    "browser-policy",
+    "chromium",
+    "family-safety",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = ["PySide6>=6.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "pyinstaller>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/CandanUmut/browserguard"
+Issues = "https://github.com/CandanUmut/browserguard/issues"
+
+[project.scripts]
+browserguard = "browserguard.cli:main"
+
+[project.gui-scripts]
+browserguard-gui = "browserguard.gui.app:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+browserguard = ["data/blocklists/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = ["error::DeprecationWarning"]
