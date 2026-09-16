@@ -401,3 +401,88 @@ def test_config_roundtrip():
 def test_settings_from_dict_ignores_unknown_keys():
     settings = ProtectionSettings.from_dict({"level": "strict", "bogus_key": 1})
     assert settings.level == "strict"
+
+
+# --------------------------------------------------------------------------
+# Defaults and formatting
+# --------------------------------------------------------------------------
+
+
+def test_no_waiting_period_is_imposed_by_default():
+    """A fresh install must not silently trap the user behind a delay."""
+    from browserguard.core.config import AppConfig as FreshConfig
+
+    assert FreshConfig().security.cooldown_hours == 0.0
+    assert FreshConfig().setup_complete is False
+
+
+def test_default_config_with_no_wait_applies_everything_immediately():
+    from browserguard.core.config import AppConfig as FreshConfig
+
+    config = FreshConfig()
+    config.protection = preset(LEVEL_STRICT)
+    _, result = cooldown.request_change(config, preset(LEVEL_OFF))
+    assert result.applied
+
+
+@pytest.mark.parametrize(
+    "hours,expected",
+    [
+        (0, "no waiting period"),
+        (0.25, "15 minutes"),
+        (0.5, "30 minutes"),
+        (1, "1 hour"),
+        (2, "2 hours"),
+        (24, "24 hours"),
+        (1.5, "1h 30m"),
+    ],
+)
+def test_format_cooldown(hours, expected):
+    from browserguard.core.config import format_cooldown
+
+    assert format_cooldown(hours) == expected
+
+
+def test_suggested_cooldown_is_fifteen_minutes():
+    from browserguard.core.config import COOLDOWN_CHOICES, DEFAULT_COOLDOWN_HOURS
+
+    assert DEFAULT_COOLDOWN_HOURS == 0.25
+    assert 0.0 in [h for h, _ in COOLDOWN_CHOICES]
+    assert 0.25 in [h for h, _ in COOLDOWN_CHOICES]
+
+
+def test_setup_complete_survives_roundtrip():
+    config = AppConfig()
+    config.setup_complete = True
+    assert AppConfig.from_dict(config.to_dict()).setup_complete is True
+
+
+# --------------------------------------------------------------------------
+# Dry run
+# --------------------------------------------------------------------------
+
+
+def test_dry_run_never_touches_the_real_machine(monkeypatch):
+    """Exercising the app must not be able to apply policy by accident."""
+    from browserguard.core.registry import MemoryRegistry as Mem
+    from browserguard.core.registry import default_registry, dry_run_enabled
+
+    monkeypatch.setenv("BROWSERGUARD_DRY_RUN", "1")
+    assert dry_run_enabled()
+    assert isinstance(default_registry(), Mem)
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+def test_dry_run_accepts_common_truthy_values(monkeypatch, value):
+    from browserguard.core.registry import dry_run_enabled
+
+    monkeypatch.setenv("BROWSERGUARD_DRY_RUN", value)
+    assert dry_run_enabled()
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no"])
+def test_dry_run_off_by_default(monkeypatch, value):
+    from browserguard.core.registry import dry_run_enabled
+
+    monkeypatch.setenv("BROWSERGUARD_DRY_RUN", value)
+    assert not dry_run_enabled()

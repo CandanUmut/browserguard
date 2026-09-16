@@ -155,11 +155,40 @@ def strictness_score(settings: ProtectionSettings) -> int:
     return score
 
 
+# Offered in the interface. 15 minutes is the suggested starting point: long
+# enough to outlast an impulse, short enough that nobody feels trapped.
+COOLDOWN_CHOICES: tuple[tuple[float, str], ...] = (
+    (0.0, "No waiting period - changes apply straight away"),
+    (0.25, "15 minutes (suggested)"),
+    (1.0, "1 hour"),
+    (24.0, "24 hours"),
+)
+
+DEFAULT_COOLDOWN_HOURS = 0.25
+
+
+def format_cooldown(hours: float) -> str:
+    """Describe a waiting period the way a person would say it."""
+    if hours <= 0:
+        return "no waiting period"
+    minutes = int(round(hours * 60))
+    if minutes < 60:
+        return f"{minutes} minutes"
+    if minutes % 60 == 0:
+        count = minutes // 60
+        if count == 24:
+            return "24 hours"
+        return f"{count} hour" + ("s" if count != 1 else "")
+    return f"{minutes // 60}h {minutes % 60}m"
+
+
 @dataclass
 class SecuritySettings:
     """Cooldown and passcode configuration."""
 
-    cooldown_hours: float = 24.0
+    # Off by default. A waiting period is something the user chooses, not
+    # something imposed on them the first time they open the app.
+    cooldown_hours: float = 0.0
     passcode_hash: str = ""
     passcode_salt: str = ""
     passcode_created_at: str = ""
@@ -188,6 +217,8 @@ class AppConfig:
     schedules: list[dict[str, Any]] = field(default_factory=list)
     pending: dict[str, Any] | None = None
     last_applied: str = ""
+    # False until the guided setup has been completed once.
+    setup_complete: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -197,6 +228,7 @@ class AppConfig:
             "schedules": self.schedules,
             "pending": self.pending,
             "last_applied": self.last_applied,
+            "setup_complete": self.setup_complete,
         }
 
     @classmethod
@@ -208,6 +240,7 @@ class AppConfig:
             schedules=data.get("schedules", []),
             pending=data.get("pending"),
             last_applied=data.get("last_applied", ""),
+            setup_complete=data.get("setup_complete", False),
         )
 
     def copy(self) -> AppConfig:

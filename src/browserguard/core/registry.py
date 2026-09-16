@@ -6,6 +6,7 @@ as strings relative to HKLM, e.g. ``SOFTWARE\Policies\Google\Chrome``.
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Protocol
 
@@ -13,8 +14,13 @@ from browserguard.core.errors import PrivilegeError, RegistryError
 
 REG_SZ = "sz"
 REG_DWORD = "dword"
+# Booleans are tracked separately from integers because macOS property lists
+# distinguish them, and a Chromium boolean policy is ignored if it arrives as an
+# integer. On Windows both still become a DWORD.
+REG_BOOL = "bool"
 
 IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 
 
 class Registry(Protocol):
@@ -73,9 +79,13 @@ class WindowsRegistry:
         self._root = winreg.HKEY_LOCAL_MACHINE
 
     def _kind(self, kind: str) -> int:
-        return self._winreg.REG_DWORD if kind == REG_DWORD else self._winreg.REG_SZ
+        if kind in (REG_DWORD, REG_BOOL):
+            return self._winreg.REG_DWORD
+        return self._winreg.REG_SZ
 
     def set_value(self, key: str, name: str, value: object, kind: str) -> None:
+        if kind == REG_BOOL:
+            value = 1 if value else 0
         try:
             with self._winreg.CreateKeyEx(
                 self._root, key, 0, self._winreg.KEY_SET_VALUE | self._winreg.KEY_WOW64_64KEY
@@ -170,18 +180,47 @@ class WindowsRegistry:
             return False
 
 
+def dry_run_enabled() -> bool:
+    """True when BROWSERGUARD_DRY_RUN is set to something truthy.
+
+    Exists so the interface can be exercised - including the setup wizard, which
+    ends by applying - without touching the machine it runs on.
+    """
+    return os.environ.get("BROWSERGUARD_DRY_RUN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def default_registry() -> Registry:
-    """Return the real registry on Windows, an in-memory stand-in elsewhere."""
-    return WindowsRegistry() if IS_WINDOWS else MemoryRegistry()
+    """Return the right policy store for this platform.
+
+    Windows uses the registry, macOS uses managed-preference property lists, and
+    anything else gets the in-memory stand-in so the core stays importable.
+    """
+    if dry_run_enabled():
+        return MemoryRegistry()
+    if IS_WINDOWS:
+        return WindowsRegistry()
+    if IS_MACOS:
+        from browserguard.core.macpolicy import PlistRegistry
+
+        return PlistRegistry()
+    return MemoryRegistry()
 
 
 def is_admin() -> bool:
-    """True when the current process holds administrator rights."""
-    if not IS_WINDOWS:
-        return False
-    import ctypes
+    """True when the process can write machine-wide policy."""
+    if IS_WINDOWS:
+        import ctypes
 
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:  # pragma: no cover - defensive
+            return False
     try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception:  # pragma: no cover - defensive
+        return os.geteuid() == 0
+    except AttributeError:  # pragma: no cover - platforms without geteuid
         return False

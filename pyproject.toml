@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "browserguard"
-version = "1.0.0"
-description = "Browser-level parental controls for Windows, applied to every installed browser at once."
+version = "1.1.0"
+description = "Browser-level parental controls for Windows and macOS, applied to every installed browser at once."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -25,6 +25,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows :: Windows 10",
     "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
     "Topic :: Security",
 ]

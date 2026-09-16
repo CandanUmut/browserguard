@@ -1,12 +1,18 @@
-# PyInstaller build spec.
+# PyInstaller build spec, shared by Windows and macOS.
 #
-# Produces two single-file executables:
+# Windows produces two single-file executables:
 #   BrowserGuard.exe      - the window, elevation requested via the manifest
 #   browserguard-cli.exe  - the same features from a console
 #
+# macOS produces:
+#   BrowserGuard.app      - the window
+#   browserguard-cli      - the console tool
+#
 # Build with:  pyinstaller browserguard.spec --noconfirm
 
-import os
+import sys
+
+IS_MACOS = sys.platform == "darwin"
 
 block_cipher = None
 
@@ -35,9 +41,6 @@ EXCLUDES = [
     "unittest",
     "pydoc",
     "doctest",
-    "email",
-    "http",
-    "xml",
     "pytest",
 ]
 
@@ -46,7 +49,7 @@ gui_analysis = Analysis(
     pathex=["src"],
     binaries=[],
     datas=DATAS,
-    hiddenimports=["browserguard.gui.app"],
+    hiddenimports=["browserguard.gui.app", "browserguard.gui.wizard"],
     hookspath=[],
     runtime_hooks=[],
     excludes=EXCLUDES,
@@ -75,9 +78,10 @@ gui_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # Writing to HKLM needs administrator rights, so ask for them up front
-    # rather than failing halfway through applying policy.
-    uac_admin=True,
+    # Windows: writing to HKLM needs administrator rights, so ask for them up
+    # front rather than failing halfway through applying policy. Ignored on macOS,
+    # where the app asks for authorisation at the point it is needed instead.
+    uac_admin=not IS_MACOS,
 )
 
 cli_analysis = Analysis(
@@ -114,8 +118,26 @@ cli_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # Deliberately NOT uac_admin: read-only commands such as `status`, `detect`
-    # and `verify` should run without a UAC prompt. Commands that write policy
-    # check for admin themselves and say so if it is missing.
+    # Deliberately not elevated: read-only commands such as `status`, `detect`
+    # and `verify` should run without a prompt. Commands that write policy check
+    # their own permissions and say so if they are missing.
     uac_admin=False,
 )
+
+if IS_MACOS:
+    app = BUNDLE(
+        gui_exe,
+        name="BrowserGuard.app",
+        icon=None,
+        bundle_identifier="org.browserguard.app",
+        info_plist={
+            "CFBundleName": "BrowserGuard",
+            "CFBundleDisplayName": "BrowserGuard",
+            "CFBundleShortVersionString": "1.1.0",
+            "CFBundleVersion": "1.1.0",
+            "NSHighResolutionCapable": True,
+            # No reason for this to appear in the Dock switcher as a document app.
+            "LSApplicationCategoryType": "public.app-category.utilities",
+            "LSMinimumSystemVersion": "11.0",
+        },
+    )

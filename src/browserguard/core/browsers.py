@@ -1,32 +1,42 @@
-"""Detecting installed browsers and working out which policy key each one reads.
+"""Detecting installed browsers and working out which policy target each one reads.
 
 Most parental-control tools hardcode Chrome, Edge and Firefox. Any other
 Chromium fork then silently ignores every policy that is written, which turns
-that browser into an unguarded hole. BrowserGuard also scans unknown Chromium
-installs for the policy path baked into their binaries, so forks are caught
-rather than missed.
+that browser into an unguarded hole. BrowserGuard also identifies unknown
+Chromium installs from the browser's own files, so forks are caught rather than
+missed:
+
+* Windows - the policy registry path is a literal string inside ``chrome.dll``.
+* macOS   - the policy domain is the bundle identifier in ``Info.plist``.
 """
 
 from __future__ import annotations
 
 import os
+import plistlib
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 CHROMIUM = "chromium"
 FIREFOX = "firefox"
 
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
+
 # Policy paths that appear inside a Chromium binary but are not the browser's
 # own policy root, and would be wrong to write to.
 _IGNORED_POLICY_PREFIXES = (
-    r"SOFTWARE\Policies\Microsoft\Windows",
-    r"SOFTWARE\Policies\Microsoft\Cryptography",
-    r"SOFTWARE\Policies\Microsoft\SystemCertificates",
-    r"SOFTWARE\Policies\Microsoft\Internet Explorer",
+    "SOFTWARE\\Policies\\Microsoft\\Windows",
+    "SOFTWARE\\Policies\\Microsoft\\Cryptography",
+    "SOFTWARE\\Policies\\Microsoft\\SystemCertificates",
+    "SOFTWARE\\Policies\\Microsoft\\Internet Explorer",
 )
 
 _POLICY_RE = re.compile(rb"SOFTWARE\\Policies\\[A-Za-z0-9 _.\\-]{2,60}")
+
+MAC_APPLICATIONS = (Path("/Applications"), Path.home() / "Applications")
 
 
 @dataclass(frozen=True)
@@ -36,9 +46,15 @@ class BrowserDef:
     id: str
     name: str
     family: str
-    policy_key: str
+    policy_key: str = ""
+    mac_domain: str = ""
     exe_names: tuple[str, ...] = ()
     install_hints: tuple[str, ...] = ()
+    mac_app_names: tuple[str, ...] = ()
+
+    def target(self) -> str:
+        """The policy target for the platform this is running on."""
+        return self.mac_domain if IS_MACOS else self.policy_key
 
 
 @dataclass
@@ -64,84 +80,104 @@ class DetectedBrowser:
 
     @property
     def policy_key(self) -> str:
-        return self.definition.policy_key
+        return self.definition.target()
 
     @property
     def installed(self) -> bool:
         return self.detected_via not in {"preemptive", "always"}
 
 
-# Browsers with a documented, vendor-specific policy root.
 KNOWN_BROWSERS: tuple[BrowserDef, ...] = (
     BrowserDef(
         id="chrome",
         name="Google Chrome",
         family=CHROMIUM,
         policy_key="SOFTWARE\\Policies\\Google\\Chrome",
+        mac_domain="com.google.Chrome",
         exe_names=("chrome.exe",),
         install_hints=("Google\\Chrome\\Application",),
+        mac_app_names=("Google Chrome.app",),
     ),
     BrowserDef(
         id="edge",
         name="Microsoft Edge",
         family=CHROMIUM,
         policy_key="SOFTWARE\\Policies\\Microsoft\\Edge",
+        mac_domain="com.microsoft.Edge",
         exe_names=("msedge.exe",),
         install_hints=("Microsoft\\Edge\\Application",),
+        mac_app_names=("Microsoft Edge.app",),
     ),
     BrowserDef(
         id="brave",
         name="Brave",
         family=CHROMIUM,
         policy_key="SOFTWARE\\Policies\\BraveSoftware\\Brave",
+        mac_domain="com.brave.Browser",
         exe_names=("brave.exe",),
         install_hints=("BraveSoftware\\Brave-Browser\\Application",),
+        mac_app_names=("Brave Browser.app",),
     ),
     BrowserDef(
         id="vivaldi",
         name="Vivaldi",
         family=CHROMIUM,
         policy_key="SOFTWARE\\Policies\\Vivaldi",
+        mac_domain="com.vivaldi.Vivaldi",
         exe_names=("vivaldi.exe",),
         install_hints=("Vivaldi\\Application",),
+        mac_app_names=("Vivaldi.app",),
     ),
     BrowserDef(
         id="opera",
         name="Opera",
         family=CHROMIUM,
         policy_key="SOFTWARE\\Policies\\Opera Software\\Opera",
+        mac_domain="com.operasoftware.Opera",
         exe_names=("opera.exe", "launcher.exe"),
         install_hints=("Opera", "Programs\\Opera"),
+        mac_app_names=("Opera.app",),
     ),
     BrowserDef(
         id="firefox",
         name="Mozilla Firefox",
         family=FIREFOX,
         policy_key="SOFTWARE\\Policies\\Mozilla\\Firefox",
+        mac_domain="org.mozilla.firefox",
         exe_names=("firefox.exe",),
         install_hints=("Mozilla Firefox",),
+        mac_app_names=("Firefox.app",),
     ),
     BrowserDef(
         id="waterfox",
         name="Waterfox",
         family=FIREFOX,
         policy_key="SOFTWARE\\Policies\\Mozilla\\Firefox",
+        mac_domain="org.mozilla.firefox",
         exe_names=("waterfox.exe",),
         install_hints=("Waterfox",),
+        mac_app_names=("Waterfox.app",),
     ),
 )
 
-# Every unbranded Chromium fork reads this key. Ecosia is the case that prompted
-# it: it ships as plain Chromium and ignores all vendor-specific policy roots.
+# Every unbranded Chromium fork reads this target. Ecosia is the case that
+# prompted it: it ships as plain Chromium and ignores vendor-specific roots.
 GENERIC_CHROMIUM = BrowserDef(
     id="chromium",
     name="Chromium & unbranded forks",
     family=CHROMIUM,
     policy_key="SOFTWARE\\Policies\\Chromium",
+    mac_domain="org.chromium.Chromium",
     exe_names=("chrome.exe", "chromium.exe"),
+    mac_app_names=("Chromium.app",),
 )
 
 _SEARCH_ROOT_VARS = ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "APPDATA")
+
+
+# ---------------------------------------------------------------------------
+# Windows
+# ---------------------------------------------------------------------------
 
 
 def _search_roots() -> list[Path]:
@@ -156,7 +192,7 @@ def _search_roots() -> list[Path]:
     return roots
 
 
-def _find_install(defn: BrowserDef) -> Path | None:
+def _find_install_windows(defn: BrowserDef) -> Path | None:
     for root in _search_roots():
         for hint in defn.install_hints:
             candidate = root / hint
@@ -172,7 +208,7 @@ def _find_install(defn: BrowserDef) -> Path | None:
 
 
 def extract_policy_key(binary: Path, limit_bytes: int = 400 * 1024 * 1024) -> str | None:
-    """Read the policy root a Chromium binary actually uses.
+    """Read the policy root a Chromium binary actually uses (Windows).
 
     Chromium stores its policy registry path as a literal string in the binary.
     Reading it is far more reliable than guessing a vendor name. Both ASCII and
@@ -202,14 +238,12 @@ def extract_policy_key(binary: Path, limit_bytes: int = 400 * 1024 * 1024) -> st
         depth = cleaned.count("\\")
         if depth < 2:
             continue
-        # Prefer the shallowest plausible root (Vendor or Vendor\Product).
         if best is None or depth < best.count("\\"):
             best = cleaned
     return best
 
 
 def _chromium_binary(install_path: Path) -> Path | None:
-    """Locate the binary that carries the policy string for a Chromium install."""
     direct = install_path / "chrome.dll"
     if direct.exists():
         return direct
@@ -223,15 +257,14 @@ def _chromium_binary(install_path: Path) -> Path | None:
     return None
 
 
-def scan_unknown_chromium(deep_scan: bool = True) -> list[DetectedBrowser]:
-    """Find Chromium-based browsers that are not in :data:`KNOWN_BROWSERS`."""
+def _scan_unknown_windows(deep_scan: bool) -> list[DetectedBrowser]:
     known_top_dirs = {
         hint.split("\\")[0].lower()
         for defn in KNOWN_BROWSERS
         for hint in defn.install_hints
     }
     found: list[DetectedBrowser] = []
-    seen_keys: set[str] = set()
+    seen: set[str] = set()
 
     for root in _search_roots():
         try:
@@ -250,14 +283,12 @@ def scan_unknown_chromium(deep_scan: bool = True) -> list[DetectedBrowser]:
                 policy_key = extract_policy_key(binary) if deep_scan else None
                 if policy_key is None:
                     policy_key = GENERIC_CHROMIUM.policy_key
-                    via = "assumed-chromium"
-                    note = "Chromium fork; assumed the generic Chromium policy key"
+                    via, note = "assumed-chromium", "Chromium fork; assumed the generic policy key"
                 else:
-                    via = "binary-scan"
-                    note = "Policy key read from " + binary.name
-                if policy_key in seen_keys:
+                    via, note = "binary-scan", f"Policy key read from {binary.name}"
+                if policy_key in seen:
                     break
-                seen_keys.add(policy_key)
+                seen.add(policy_key)
                 found.append(
                     DetectedBrowser(
                         definition=BrowserDef(
@@ -276,15 +307,106 @@ def scan_unknown_chromium(deep_scan: bool = True) -> list[DetectedBrowser]:
     return found
 
 
+# ---------------------------------------------------------------------------
+# macOS
+# ---------------------------------------------------------------------------
+
+
+def bundle_identifier(app: Path) -> str | None:
+    """Read ``CFBundleIdentifier`` from an application bundle.
+
+    On macOS this is the policy domain, so it is the direct equivalent of the
+    registry path scan done on Windows - and rather more pleasant to obtain.
+    """
+    info = app / "Contents" / "Info.plist"
+    try:
+        with info.open("rb") as handle:
+            data = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException):
+        return None
+    value = data.get("CFBundleIdentifier")
+    return value if isinstance(value, str) and value else None
+
+
+def _is_chromium_bundle(app: Path) -> bool:
+    frameworks = app / "Contents" / "Frameworks"
+    if not frameworks.is_dir():
+        return False
+    return any(f.name.endswith("Framework.framework") for f in frameworks.iterdir())
+
+
+def _find_install_macos(defn: BrowserDef) -> Path | None:
+    for root in MAC_APPLICATIONS:
+        for name in defn.mac_app_names:
+            candidate = root / name
+            if candidate.is_dir():
+                return candidate
+    return None
+
+
+def _scan_unknown_macos() -> list[DetectedBrowser]:
+    known = {name.lower() for defn in KNOWN_BROWSERS for name in defn.mac_app_names}
+    known.update(n.lower() for n in GENERIC_CHROMIUM.mac_app_names)
+    found: list[DetectedBrowser] = []
+    seen: set[str] = set()
+
+    for root in MAC_APPLICATIONS:
+        if not root.is_dir():
+            continue
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            continue
+        for app in entries:
+            if app.suffix != ".app" or app.name.lower() in known:
+                continue
+            if not _is_chromium_bundle(app):
+                continue
+            domain = bundle_identifier(app)
+            if not domain or domain in seen:
+                continue
+            seen.add(domain)
+            found.append(
+                DetectedBrowser(
+                    definition=BrowserDef(
+                        id="fork:" + app.stem.lower(),
+                        name=app.stem,
+                        family=CHROMIUM,
+                        mac_domain=domain,
+                    ),
+                    install_path=app,
+                    detected_via="bundle-scan",
+                    notes=[f"Policy domain read from Info.plist: {domain}"],
+                )
+            )
+    return found
+
+
+# ---------------------------------------------------------------------------
+# Shared
+# ---------------------------------------------------------------------------
+
+
+def scan_unknown_chromium(deep_scan: bool = True) -> list[DetectedBrowser]:
+    """Find Chromium-based browsers that are not in :data:`KNOWN_BROWSERS`."""
+    if IS_MACOS:
+        return _scan_unknown_macos()
+    if IS_WINDOWS:
+        return _scan_unknown_windows(deep_scan)
+    return []
+
+
 def detect_browsers(deep_scan: bool = True) -> list[DetectedBrowser]:
     """Return every browser found on this machine.
 
-    The generic Chromium key is always included even when no fork is detected:
-    writing it is harmless, and it covers a fork installed later.
+    The generic Chromium target is always included even when no fork is
+    detected: writing it is harmless, and it covers a fork installed later.
     """
+    find_install = _find_install_macos if IS_MACOS else _find_install_windows
+
     detected: list[DetectedBrowser] = []
     for defn in KNOWN_BROWSERS:
-        install = _find_install(defn)
+        install = find_install(defn)
         if install is not None:
             detected.append(DetectedBrowser(definition=defn, install_path=install))
 
@@ -296,33 +418,34 @@ def detect_browsers(deep_scan: bool = True) -> list[DetectedBrowser]:
         )
     )
 
-    # Forks are kept even when they share a policy key with the generic Chromium
+    # Forks are kept even when they share a target with the generic Chromium
     # entry, so the user can see that their browser was actually recognised.
-    # De-duplication by key happens at write time, not here.
-    known_keys = {d.policy_key for d in detected}
+    # De-duplication by target happens at write time, not here.
+    known_targets = {d.policy_key for d in detected}
     for fork in scan_unknown_chromium(deep_scan=deep_scan):
-        if fork.policy_key in known_keys:
-            fork.notes.append("Covered by the policy key above; nothing extra to write")
+        if fork.policy_key in known_targets:
+            fork.notes.append("Covered by the entry above; nothing extra to write")
         detected.append(fork)
     return detected
 
 
 def all_policy_targets(deep_scan: bool = True) -> list[DetectedBrowser]:
-    """One entry per distinct policy key that should be written.
+    """One entry per distinct policy target that should be written.
 
     Writing policy for a browser that is not installed costs nothing and means
     protection is already in force if that browser is installed later. Several
-    browsers can share a key (every unbranded Chromium fork does), so this
-    collapses them to avoid writing the same key twice.
+    browsers can share a target (every unbranded Chromium fork does), so this
+    collapses them to avoid writing the same one twice.
     """
     targets: list[DetectedBrowser] = []
     seen: set[str] = set()
     for browser in detect_browsers(deep_scan=deep_scan):
-        if browser.policy_key not in seen:
+        if browser.policy_key and browser.policy_key not in seen:
             targets.append(browser)
             seen.add(browser.policy_key)
     for defn in KNOWN_BROWSERS:
-        if defn.policy_key not in seen:
+        target = defn.target()
+        if target and target not in seen:
             targets.append(
                 DetectedBrowser(
                     definition=defn,
@@ -330,5 +453,5 @@ def all_policy_targets(deep_scan: bool = True) -> list[DetectedBrowser]:
                     notes=["Not installed; covered if it is installed later"],
                 )
             )
-            seen.add(defn.policy_key)
+            seen.add(target)
     return targets

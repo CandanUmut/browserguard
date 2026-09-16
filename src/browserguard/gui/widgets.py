@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,8 +23,8 @@ class Card(QFrame):
         super().__init__(parent)
         self.setObjectName("Card")
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(18, 16, 18, 16)
-        self._layout.setSpacing(10)
+        self._layout.setContentsMargins(18, 15, 18, 15)
+        self._layout.setSpacing(9)
         if title:
             label = QLabel(title)
             label.setObjectName("SectionTitle")
@@ -46,6 +46,47 @@ class Card(QFrame):
         return self._layout
 
 
+class ChoiceCard(QFrame):
+    """A large clickable option, used for protection levels and waiting periods."""
+
+    clicked = Signal()
+
+    def __init__(self, title: str, description: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("Choice")
+        self.setCursor(Qt.PointingHandCursor)
+        self._selected = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 13, 15, 13)
+        layout.setSpacing(5)
+
+        self.title_label = QLabel(title)
+        self.title_label.setStyleSheet("font-size: 15px; font-weight: 700; background: transparent;")
+        layout.addWidget(self.title_label)
+
+        self.description_label = QLabel(description)
+        self.description_label.setWordWrap(True)
+        self.description_label.setStyleSheet(
+            f"color: {COLORS['text_dim']}; font-size: 12px; background: transparent;"
+        )
+        layout.addWidget(self.description_label)
+        layout.addStretch(1)
+
+    def set_selected(self, selected: bool) -> None:
+        if selected == self._selected:
+            return
+        self._selected = selected
+        self.setObjectName("ChoiceSelected" if selected else "Choice")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class Banner(QFrame):
     """A coloured strip for status, warnings and pending changes."""
 
@@ -54,26 +95,27 @@ class Banner(QFrame):
         self.setObjectName("Banner")
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(14, 11, 14, 11)
-        self._layout.setSpacing(12)
+        self._layout.setSpacing(10)
 
         self.label = QLabel("")
         self.label.setWordWrap(True)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.label.setStyleSheet("background: transparent;")
         self._layout.addWidget(self.label, 1)
 
         self.buttons: list[QPushButton] = []
         self.hide()
 
     def show_message(self, text: str, tone: str = "info") -> None:
-        border = {
-            "info": COLORS["accent"],
-            "good": COLORS["good"],
-            "warn": COLORS["warn"],
-            "bad": COLORS["bad"],
-        }.get(tone, COLORS["accent"])
+        border, background = {
+            "info": (COLORS["accent"], COLORS["accent_soft"]),
+            "good": (COLORS["good"], COLORS["good_soft"]),
+            "warn": (COLORS["warn"], COLORS["warn_soft"]),
+            "bad": (COLORS["bad"], COLORS["bad_soft"]),
+        }.get(tone, (COLORS["accent"], COLORS["accent_soft"]))
         self.setStyleSheet(
-            f"QFrame#Banner {{ border: 1px solid {border};"
-            f" background: {COLORS['surface_alt']}; border-radius: 10px; }}"
+            f"QFrame#Banner {{ border: 1px solid {border}; background: {background};"
+            " border-radius: 10px; }"
         )
         self.label.setText(text)
         self.show()
@@ -100,7 +142,7 @@ class PageHeader(QWidget):
     def __init__(self, title: str, subtitle: str, parent: QWidget | None = None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 6)
+        layout.setContentsMargins(0, 0, 0, 2)
         layout.setSpacing(3)
         heading = QLabel(title)
         heading.setObjectName("Title")
@@ -115,7 +157,9 @@ class PageHeader(QWidget):
 def hline() -> QFrame:
     line = QFrame()
     line.setFrameShape(QFrame.HLine)
-    line.setStyleSheet(f"color: {COLORS['border']}; background: {COLORS['border']};")
+    line.setStyleSheet(
+        f"color: {COLORS['border_soft']}; background: {COLORS['border_soft']}; border: none;"
+    )
     line.setFixedHeight(1)
     return line
 
@@ -137,9 +181,29 @@ def dim(text: str) -> QLabel:
     return label
 
 
-def colored(text: str, color: str, size: int = 13, bold: bool = True) -> QLabel:
+def colored(text: str, color: str, size: int = 14, bold: bool = True) -> QLabel:
     label = QLabel(text)
-    weight = "600" if bold else "400"
-    label.setStyleSheet(f"color: {color}; font-size: {size}px; font-weight: {weight};")
+    weight = "700" if bold else "400"
+    label.setStyleSheet(
+        f"color: {color}; font-size: {size}px; font-weight: {weight}; background: transparent;"
+    )
     label.setTextInteractionFlags(Qt.TextSelectableByMouse)
     return label
+
+
+def primary(text: str, on_click=None) -> QPushButton:
+    button = QPushButton(text)
+    button.setObjectName("Primary")
+    button.setMinimumHeight(38)
+    if on_click is not None:
+        button.clicked.connect(on_click)
+    return button
+
+
+def link(text: str, on_click=None) -> QPushButton:
+    button = QPushButton(text)
+    button.setObjectName("Link")
+    button.setCursor(Qt.PointingHandCursor)
+    if on_click is not None:
+        button.clicked.connect(on_click)
+    return button

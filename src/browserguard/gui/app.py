@@ -40,21 +40,41 @@ from browserguard.version import APP_NAME, __version__
 
 
 def relaunch_as_admin() -> bool:
-    """Restart the app elevated. Returns True if the relaunch was started."""
-    if sys.platform != "win32":
-        return False
-    try:
-        if getattr(sys, "frozen", False):
-            executable, params = sys.executable, ""
-        else:
-            executable = sys.executable
-            params = f'-m browserguard "{" ".join(sys.argv[1:])}"'.strip()
-        result = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", executable, params or None, None, 1
-        )
-        return int(result) > 32
-    except Exception:  # noqa: BLE001
-        return False
+    """Restart the app with the rights needed to write policy.
+
+    Windows shows the standard UAC prompt; macOS uses the system authentication
+    dialog via osascript. Returns True if the relaunch was started.
+    """
+    if sys.platform == "win32":
+        try:
+            if getattr(sys, "frozen", False):
+                executable, params = sys.executable, ""
+            else:
+                executable = sys.executable
+                params = f'-m browserguard "{" ".join(sys.argv[1:])}"'.strip()
+            result = ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", executable, params or None, None, 1
+            )
+            return int(result) > 32
+        except Exception:  # noqa: BLE001
+            return False
+
+    if sys.platform == "darwin":
+        import shlex
+        import subprocess
+
+        try:
+            if getattr(sys, "frozen", False):
+                command = shlex.quote(sys.executable)
+            else:
+                command = f"{shlex.quote(sys.executable)} -m browserguard"
+            script = f'do shell script "{command} > /dev/null 2>&1 &" with administrator privileges'
+            subprocess.Popen(["osascript", "-e", script])
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    return False
 
 
 class Controller(QObject):
@@ -135,6 +155,10 @@ class Controller(QObject):
             return False
         return verify_passcode(passcode, security.passcode_hash, security.passcode_salt)
 
+    def apply_setup(self) -> engine.ApplyReport:
+        """Save and apply everything chosen in the guided setup."""
+        return self._save_and_apply()
+
     def set_cooldown(self, hours: float) -> None:
         self.config.security.cooldown_hours = hours
         save_config(self.config)
@@ -189,8 +213,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.controller = controller
         self.setWindowTitle(f"{APP_NAME} {__version__}")
-        self.resize(1080, 760)
-        self.setMinimumSize(900, 620)
+        # Sized so every page fits without scrolling.
+        self.resize(1160, 800)
+        self.setMinimumSize(1020, 700)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -198,10 +223,24 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        sidebar = QWidget()
+        sidebar.setFixedWidth(210)
+        sidebar.setStyleSheet(
+            f"background: {COLORS['surface']}; border-right: 1px solid {COLORS['border']};"
+        )
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 12)
+        sidebar_layout.setSpacing(6)
+
         self.nav = QListWidget()
         self.nav.setObjectName("Nav")
-        self.nav.setFixedWidth(200)
-        outer.addWidget(self.nav)
+        sidebar_layout.addWidget(self.nav, 1)
+
+        setup_button = QPushButton("Run setup again")
+        setup_button.setObjectName("Link")
+        setup_button.clicked.connect(self.run_setup)
+        sidebar_layout.addWidget(setup_button)
+        outer.addWidget(sidebar)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -269,6 +308,18 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         self.pages[index][1].refresh()
 
+    def refresh_all(self) -> None:
+        """Rebuild every page, e.g. after the wizard has changed everything."""
+        for _, page in self.pages:
+            page.refresh()
+        self._refresh()
+
+    def run_setup(self) -> None:
+        from browserguard.gui.wizard import SetupWizard
+
+        SetupWizard(self.controller, self).exec()
+        self.refresh_all()
+
     def closeEvent(self, event) -> None:
         """Let background work finish so the process exits cleanly."""
         self.timer.stop()
@@ -320,13 +371,14 @@ class MainWindow(QMainWindow):
 
     def _refresh_banners(self) -> None:
         if not is_admin():
+            elevated_name = "administrator" if sys.platform == "win32" else "an administrator"
             self.admin_banner.clear_buttons()
             self.admin_banner.show_message(
-                "Running without administrator rights. You can look around, but "
-                "policy cannot be written until you restart elevated.",
+                f"Not running as {elevated_name}. You can look around, but nothing "
+                "can be applied until you restart with the right permissions.",
                 "warn",
             )
-            self.admin_banner.add_button("Restart as administrator", self._elevate, primary=True)
+            self.admin_banner.add_button("Restart with permissions", self._elevate, primary=True)
         else:
             self.admin_banner.hide()
 
@@ -361,13 +413,15 @@ class MainWindow(QMainWindow):
     def _elevate(self) -> None:
         if relaunch_as_admin():
             QApplication.quit()
-        else:
-            QMessageBox.warning(
-                self,
-                "Could not restart",
-                "The elevation prompt was declined or failed. Right-click "
-                f"{APP_NAME} and choose 'Run as administrator' instead.",
+            return
+        if sys.platform == "darwin":
+            hint = (
+                "Start it from Terminal with:\n\n"
+                "sudo /Applications/BrowserGuard.app/Contents/MacOS/BrowserGuard"
             )
+        else:
+            hint = f"Right-click {APP_NAME} and choose 'Run as administrator' instead."
+        QMessageBox.warning(self, "Could not restart", f"The prompt was declined or failed.\n\n{hint}")
 
 
 def _icon() -> QIcon:
@@ -404,4 +458,13 @@ def run() -> int:
     controller = Controller()
     window = MainWindow(controller)
     window.show()
+
+    # First run: walk the user through it rather than dropping them in cold.
+    if not controller.config.setup_complete:
+        from browserguard.gui.wizard import SetupWizard
+
+        wizard = SetupWizard(controller, window)
+        wizard.exec()
+        window.refresh_all()
+
     return app.exec()

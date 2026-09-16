@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from browserguard.core import blocklists
 from browserguard.core.browsers import CHROMIUM, FIREFOX, DetectedBrowser
-from browserguard.core.registry import REG_DWORD, REG_SZ, Registry
+from browserguard.core.registry import REG_BOOL, REG_DWORD, REG_SZ, Registry
 
 # Chromium refuses to load a URLBlocklist longer than this.
 CHROMIUM_BLOCKLIST_LIMIT = 1000
@@ -63,6 +63,7 @@ class PolicyPlan:
     """Everything to write for one browser."""
 
     policy_key: str
+    family: str = CHROMIUM
     values: list[PolicyValue] = field(default_factory=list)
     lists: list[PolicyList] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -95,7 +96,7 @@ def _allowed_patterns(settings) -> list[str]:
 
 def build_chromium_plan(settings, policy_key: str) -> PolicyPlan:
     """Build the policy plan for a Chromium-family browser."""
-    plan = PolicyPlan(policy_key=policy_key)
+    plan = PolicyPlan(policy_key=policy_key, family=CHROMIUM)
     blocked = _blocked_patterns(settings)
     allowed = _allowed_patterns(settings)
 
@@ -121,8 +122,8 @@ def build_chromium_plan(settings, policy_key: str) -> PolicyPlan:
         plan.lists.append(PolicyList("URLAllowlist", tuple(allowed)))
 
     if settings.safe_search:
-        plan.values.append(PolicyValue("ForceGoogleSafeSearch", 1, REG_DWORD))
-        plan.values.append(PolicyValue("ForceBingSafeSearch", 1, REG_DWORD))
+        plan.values.append(PolicyValue("ForceGoogleSafeSearch", True, REG_BOOL))
+        plan.values.append(PolicyValue("ForceBingSafeSearch", True, REG_BOOL))
 
     youtube = YOUTUBE_MODES.get(settings.youtube_restrict, 0)
     if youtube:
@@ -143,12 +144,12 @@ def build_chromium_plan(settings, policy_key: str) -> PolicyPlan:
         # Without this, F12 lets a user edit the page and inspect requests.
         plan.values.append(PolicyValue("DeveloperToolsAvailability", 2, REG_DWORD))
     if settings.block_guest_mode:
-        plan.values.append(PolicyValue("BrowserGuestModeEnabled", 0, REG_DWORD))
+        plan.values.append(PolicyValue("BrowserGuestModeEnabled", False, REG_BOOL))
 
     if settings.force_plain_dns:
         # Browser-level DoH bypasses any DNS filtering on the machine.
         plan.values.append(PolicyValue("DnsOverHttpsMode", "off", REG_SZ))
-        plan.values.append(PolicyValue("BuiltInDnsClientEnabled", 0, REG_DWORD))
+        plan.values.append(PolicyValue("BuiltInDnsClientEnabled", False, REG_BOOL))
 
     if settings.lock_extensions:
         plan.lists.append(PolicyList("ExtensionInstallBlocklist", ("*",)))
@@ -167,7 +168,7 @@ def _firefox_match_pattern(domain: str) -> str:
 
 def build_firefox_plan(settings, policy_key: str) -> PolicyPlan:
     """Build the policy plan for a Firefox-family browser."""
-    plan = PolicyPlan(policy_key=policy_key)
+    plan = PolicyPlan(policy_key=policy_key, family=FIREFOX)
     blocked = _blocked_patterns(settings)
     allowed = _allowed_patterns(settings)
 
@@ -189,14 +190,14 @@ def build_firefox_plan(settings, policy_key: str) -> PolicyPlan:
         )
 
     if settings.block_incognito:
-        plan.values.append(PolicyValue("DisablePrivateBrowsing", 1, REG_DWORD))
+        plan.values.append(PolicyValue("DisablePrivateBrowsing", True, REG_BOOL))
     if settings.block_devtools:
-        plan.values.append(PolicyValue("DisableDeveloperTools", 1, REG_DWORD))
+        plan.values.append(PolicyValue("DisableDeveloperTools", True, REG_BOOL))
     if settings.force_plain_dns:
-        plan.values.append(PolicyValue("DNSOverHTTPS\\Enabled", 0, REG_DWORD))
-        plan.values.append(PolicyValue("DNSOverHTTPS\\Locked", 1, REG_DWORD))
+        plan.values.append(PolicyValue("DNSOverHTTPS\\Enabled", False, REG_BOOL))
+        plan.values.append(PolicyValue("DNSOverHTTPS\\Locked", True, REG_BOOL))
     # about:config can undo much of the above by hand.
-    plan.values.append(PolicyValue("BlockAboutConfig", 1, REG_DWORD))
+    plan.values.append(PolicyValue("BlockAboutConfig", True, REG_BOOL))
 
     if settings.safe_search:
         plan.warnings.append(
@@ -216,8 +217,8 @@ def build_plan(settings, browser: DetectedBrowser) -> PolicyPlan:
 
 
 def apply_plan(registry: Registry, plan: PolicyPlan) -> None:
-    """Write a plan to the registry, clearing anything stale first."""
-    clear_policies(registry, plan.policy_key, family_subkeys=_subkeys_for(plan))
+    """Write a plan to the policy store, clearing anything stale first."""
+    clear_policies(registry, plan.policy_key, family=plan.family)
 
     for value in plan.values:
         if "\\" in value.name:
@@ -232,30 +233,33 @@ def apply_plan(registry: Registry, plan: PolicyPlan) -> None:
             registry.set_value(target, str(index), entry, REG_SZ)
 
 
-def _subkeys_for(plan: PolicyPlan) -> tuple[str, ...]:
-    if "Mozilla" in plan.policy_key:
-        return FIREFOX_MANAGED_SUBKEYS
-    return CHROMIUM_MANAGED_SUBKEYS
+def _is_firefox(policy_key: str, family: str | None) -> bool:
+    if family is not None:
+        return family == FIREFOX
+    # Fallback for callers that only know the target: both the Windows path
+    # (Policies\Mozilla\Firefox) and the macOS domain (org.mozilla.firefox)
+    # contain "mozilla".
+    return "mozilla" in policy_key.lower()
 
 
 def clear_policies(
-    registry: Registry, policy_key: str, family_subkeys: tuple[str, ...] | None = None
+    registry: Registry, policy_key: str, family: str | None = None
 ) -> None:
     """Remove only the values BrowserGuard manages, leaving anything else alone."""
-    is_firefox = "Mozilla" in policy_key
+    is_firefox = _is_firefox(policy_key, family)
     values = FIREFOX_MANAGED_VALUES if is_firefox else CHROMIUM_MANAGED_VALUES
-    subkeys = family_subkeys or (
-        FIREFOX_MANAGED_SUBKEYS if is_firefox else CHROMIUM_MANAGED_SUBKEYS
-    )
+    subkeys = FIREFOX_MANAGED_SUBKEYS if is_firefox else CHROMIUM_MANAGED_SUBKEYS
     for name in values:
         registry.delete_value(policy_key, name)
     for subkey in subkeys:
         registry.delete_tree(f"{policy_key}\\{subkey}")
 
 
-def read_applied(registry: Registry, policy_key: str) -> dict[str, object]:
-    """Read back what is actually live under a policy key, for verification."""
-    is_firefox = "Mozilla" in policy_key
+def read_applied(
+    registry: Registry, policy_key: str, family: str | None = None
+) -> dict[str, object]:
+    """Read back what is actually live under a policy target, for verification."""
+    is_firefox = _is_firefox(policy_key, family)
     result: dict[str, object] = {}
     for name, value in registry.list_values(policy_key).items():
         result[name] = value

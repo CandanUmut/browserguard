@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.1.0
+
+### Changed
+- Light theme throughout.
+- Every page now fits the window; no page scrolls.
+- **No waiting period is set by default.** Setup offers one, suggests 15 minutes,
+  and defaults to off. Previously a 24-hour wait was imposed without being asked for.
+
+### Added
+- Guided setup on first run: protection level, optional waiting period, optional
+  passcode, apply, and a final step showing how to undo everything. The passcode
+  step is skipped when there is no wait for it to skip.
+- **macOS support (beta).** Managed-preference property lists under
+  `/Library/Managed Preferences`, Chromium forks identified by the bundle
+  identifier in `Info.plist`, and authorisation via the system prompt.
+- `BROWSERGUARD_DRY_RUN=1` sends every write to memory instead of the machine, so
+  the interface can be exercised safely - including the wizard, which ends by
+  applying.
+- Site lists are now type-and-Enter, with a Remove button and Delete-key support.
+- Passcode dialog shows the code with copy-to-clipboard and save-to-file.
+- Booleans are tracked separately from integers, because a Chromium boolean policy
+  is ignored on macOS if it arrives as an integer.
+- `cooldown` accepts `--minutes`.
+
 ## 1.0.0
 
 First release.

@@ -18,6 +18,7 @@ from browserguard.core.config import (
     LEVEL_CUSTOM,
     LEVEL_DESCRIPTIONS,
     config_path,
+    format_cooldown,
     load_config,
     save_config,
     with_level,
@@ -61,7 +62,7 @@ def cmd_status(args) -> int:
     print(f"Allowed:     {len(settings.allowed)} entries")
     print(f"SafeSearch:  {'on' if settings.safe_search else 'off'}")
     print(f"YouTube:     {settings.youtube_restrict}")
-    print(f"Cooldown:    {config.security.cooldown_hours} h")
+    print(f"Waiting:     {format_cooldown(config.security.cooldown_hours)}")
     print(f"Passcode:    {'set' if config.security.has_passcode else 'not set'}")
     print(f"Background:  {'registered' if scheduler.is_registered() else 'not registered'}")
 
@@ -207,19 +208,20 @@ def cmd_cooldown(args) -> int:
     if _need_admin():
         return 1
     config = load_config()
+    args.hours = args.value / 60 if args.minutes else args.value
     old = config.security.cooldown_hours
     # Lengthening the wait is a tightening, so it is immediate. Shortening it is
     # a loosening and has to wait out the current cooldown.
     if args.hours < old and not _passcode_ok(config, args.passcode):
         print(
-            f"Shortening the waiting period from {old}h to {args.hours}h reduces "
-            "protection, so it needs the passcode. Without it, set the new value "
-            "after the current period elapses."
+            f"Shortening the waiting period from {format_cooldown(old)} to "
+            f"{format_cooldown(args.hours)} reduces protection, so it needs the "
+            "passcode. Without it, set the new value after the current period elapses."
         )
         return 1
     config.security.cooldown_hours = args.hours
     save_config(config)
-    print(f"Waiting period set to {args.hours} hours.")
+    print(f"Waiting period: {format_cooldown(args.hours)}.")
     return 0
 
 
@@ -357,8 +359,9 @@ def build_parser() -> argparse.ArgumentParser:
     passcode.add_argument("--out", help="Where to write the passcode file.")
     passcode.set_defaults(func=cmd_passcode)
 
-    cd = sub.add_parser("cooldown", help="Set the waiting period in hours.")
-    cd.add_argument("hours", type=float)
+    cd = sub.add_parser("cooldown", help="Set the waiting period (0 turns it off).")
+    cd.add_argument("value", type=float, help="Length of the wait. Hours unless --minutes.")
+    cd.add_argument("--minutes", action="store_true", help="Treat the value as minutes.")
     cd.add_argument("--passcode", help="Needed to shorten the period.")
     cd.set_defaults(func=cmd_cooldown)
 

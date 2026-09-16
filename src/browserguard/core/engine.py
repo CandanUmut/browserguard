@@ -81,7 +81,7 @@ def apply_protection(
     for browser in browsers:
         try:
             if not settings.enabled:
-                policies.clear_policies(registry, browser.policy_key)
+                policies.clear_policies(registry, browser.policy_key, browser.family)
                 report.results.append(
                     BrowserResult(
                         name=browser.name,
@@ -153,7 +153,7 @@ def uninstall(registry: Registry | None = None, deep_scan: bool = True) -> Apply
     report = ApplyReport(protection_enabled=False)
     for browser in all_policy_targets(deep_scan=deep_scan):
         try:
-            policies.clear_policies(registry, browser.policy_key)
+            policies.clear_policies(registry, browser.policy_key, browser.family)
             report.results.append(
                 BrowserResult(
                     name=browser.name,
@@ -182,7 +182,7 @@ def verify(registry: Registry | None = None, deep_scan: bool = True) -> list[dic
     registry = registry or default_registry()
     rows = []
     for browser in all_policy_targets(deep_scan=deep_scan):
-        applied = policies.read_applied(registry, browser.policy_key)
+        applied = policies.read_applied(registry, browser.policy_key, browser.family)
         rows.append(
             {
                 "name": browser.name,
